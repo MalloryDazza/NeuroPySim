@@ -4,7 +4,47 @@
 import numpy as np
 import nest
 
+def normalize_params(params):
+    '''
+    return all parameters in a dictionnary, but normalized
+    '''
+    p_osc = nest.GetDefaults('aeif_psc_alpha')
+    ret = {}
+  
+    if params is not None:
+        p_osc.update(params)
+    
+    gL   = p_osc["g_L"]
+    EL   = p_osc["E_L"]
+    Vth  = p_osc["V_th"]
+    DT   = p_osc["Delta_T"]
+    Ie   = p_osc["I_e"]
+    a    = p_osc['a']
+    b    = p_osc['b']
+    Vr   = p_osc["V_reset"]
+    Cm   = p_osc['C_m']
+    tauw = p_osc['tau_w']
+    taum = Cm / gL
+    
+    ret["E_L"]  = p_osc["E_L"] - Vth
+    ret["E_L"] /= DT
+    
+    ret["I_e"]   = p_osc["I_e"] / (gL * DT)
+    
+    ret['tau_w'] = p_osc['tau_w'] / taum
+    
+    ret['a'] = p_osc['a'] / gL
+    
+    ret['V_reset'] = p_osc["V_reset"] - Vth
+    ret['V_reset'] /= DT
 
+    ret['b']  = b / ( gL * DT)
+    
+    ret['Delta_T'] = DT
+    ret['g_L'] = gL
+    ret['V_th'] = Vth
+    
+    return ret  
 
 def susceptibility(V, w, model, params):
     '''
