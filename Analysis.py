@@ -105,6 +105,32 @@ def PolygonPatch(polygon, **kwargs):
     """
     return PathPatch(PolygonPath(polygon), **kwargs)
 
+def mean_simps(x, y, x1, x2):
+    '''
+    Compute the mean of y between x1 and x2 with the simps method from
+    scipy to compute the integral
+    '''
+    from scipy.integrate import simps
+    
+    id1 = np.where(x > x1)[0][0]
+    id2 = np.where(x > x2)[0][0]
+
+    y = y[id1:id2]
+    x = x[id1:id2]
+    
+    return simps(y,x) / (y[-1] - y[1])
+
+def mean_direct(y, x, x1, x2):
+    '''
+    Compute the mean for evenly spaced x
+    '''
+    id1 = np.where(x > x1)[0][0]
+    id2 = np.where(x > x2)[0][0]
+
+    y = y[id1:id2]
+    
+    return np.mean(y)
+
 def normalise_array(array):
     return (array - np.min(array)) / ( np.max(array) - np.min(array))
 
