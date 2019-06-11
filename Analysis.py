@@ -388,7 +388,7 @@ def Burst_times(Activity_Raster, time_array, th_high = 0.6,
     
     #Compute the network phase
     dt = time_array[1] - time_array[0]
-    Net_phi = Network_Phase(Activity_Raster, time_array)
+    Net_phi = all_time_network_phase(Activity_Raster, time_array)
     #Net_phi = convolve_gauss(Net_phi, sigma = 5*dt, dt=dt, crop = 5.)
     
     #f,a = plt.subplots()

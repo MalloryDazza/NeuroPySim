@@ -434,6 +434,321 @@ def span_culture(surfaces, culture):
     else:
         return True
 
+def vector_norm(array):
+    return np.sqrt(array[0]**2 + array[1]**2)
+
+def norm(array):
+    return np.sqrt( array[0]**2 + array[1]**2 )
+
+def smallest_circle(points):
+    '''
+    Return a circle as (centroid_x, centroid_y, radius) that enclose all points
+    '''
+    centroid = np.mean(points, axis = 0)
+    distance = np.linalg.norm( points - centroid, axis = 1)
+    where = np.where(distance == np.max(distance))[0][0]
+    return np.array([centroid[0], centroid[1], distance[where]])
+
+def smallest_ellipse(points, tol = 0.001):
+    """
+    Find the minimum volume ellipse.
+    Parameters:
+    -----------
+    - points : array of size Nx2
+    
+    Return:
+    -------
+    A, c : arrays where the equation for the ellipse given in "center form" is
+    (x-c).T * A * (x-c) = 1
+    
+    N.B.: The ellipse might not contain all points 
+    
+    """
+    points = np.asmatrix(points)
+    N, d = points.shape
+    Q = np.column_stack((points, np.ones(N))).T
+    err = tol+1.0
+    u = np.ones(N)/N
+    
+    while err > tol:
+        # assert u.sum() == 1 # invariant
+        X = Q * np.diag(u) * Q.T
+        M = np.diag(Q.T * la.inv(X) * Q)
+        jdx = np.argmax(M)
+        step_size = (M[jdx]-d-1.0)/((d+1)*(M[jdx]-1.0))
+        new_u = (1-step_size)*u
+        new_u[jdx] += step_size
+        err = la.norm(new_u-u)
+        u = new_u
+    c = u*points
+    A = la.inv(points.T*np.diag(u)*points - c.T*c)/d
+    return np.asarray(A), np.squeeze(np.asarray(c))
+
+def make_sh_ellipse(A, c, add = .2 ):
+    '''
+    Create a shapely Polygone to represent the (A,c) ellipse
+    
+    Return:
+    -------
+     Shapely Polygone 
+    '''
+    #eigenvalues, eigenvectors
+    D, V = la.eig(A)
+    V = V.T
+    #semi axes
+    rx, ry = 1./np.sqrt(D)
+    
+    circ = Point(c).buffer(1.)
+
+    ell  = shapely.affinity.scale(circ, rx, ry)
+
+    ellr = shapely.affinity.rotate(ell, np.arctan2([V[0][1]], [V[0][0]] )*180./np.pi )
+    
+    return ellr.buffer(add)
+
+def Spatial_Clustering_Analysis(NXY, positions, epsilon, neighbors, clt_min_size = 5, 
+                                shape = 'ellipse'):
+    '''
+    Compute the Clusters and their 'regions of influence'. Overlaping clusters are merged
+    together.
+    
+    Parameters:
+    -----------
+    - NXY          : array like, of size N_spike x 3 with first colum the neuron ids (NEST), 
+                     second and third the neurons posiions
+    - positions    : array of size N_neurons x 2: positions of all neuronsordered with NEST ids
+    - epsilon      : float, DBSCAN paramter
+    - neighbors    : int, DBSCAN paramter
+    - clt_min_size : int, minimum size of cluster
+    - shape        : string, 'ellipse' or 'circle'
+    
+    Return : 
+    --------
+    CLUSTERS, CIRCLES : 2 dictionnaries of size number of clusters, with clusters properties as 
+                        values; respectively list array of ids and array of circles properties
+                        (center_x, center_y, r)
+    '''
+    #DBSCAN Clustering - NEST ids start at 1
+    ids = Ids_in_cluster(NXY, epsilon, neighbors, n_jobs = 8)
+    
+    #Remove small clusters
+    if ids:
+        for clt in ids.keys():
+            clt_size = len(ids[clt].keys())
+            if clt_size < clt_min_size:
+                ids.pop(clt, None)
+
+    if ids:
+        #if there are more than one cluster, try to merge them (if overlap of circles)
+        if len(ids.keys()) > 1:
+            # with NNGT ids start 0 
+            CLUSTERS, CIRCLES = merge_clusters(ids, positions, shape)
+        else:
+            if shape == 'circle':
+                # with NNGT ids start 0
+                CLUSTERS = {0: np.array(ids.values()[0].keys()).flatten().astype(int) - 1}
+                CIRCLES  = {0: np.array([smallest_circle(positions[CLUSTERS[0]])])}
+            elif shape == 'ellipse':
+                CLUSTERS = {0: np.array(ids.values()[0].keys()).flatten().astype(int) - 1}
+                A, c = smallest_ellipse(positions[CLUSTERS[0]])
+                CIRCLES  = {0: np.array([make_sh_ellipse(A,c)])}
+                
+        # NNGT ids of neurons that spiked but not in clusters
+        spiked = set(NXY[:,0] - 1) - set(itertools.chain(*CLUSTERS.values()))
+        ###print(len(set( itertools.chain(*CLUSTERS.values()))), 
+         ###     len(list(itertools.chain(*CLUSTERS.values())))      )
+        # add in clusters, spiking neurons that has not been detected in the cluster
+        for areas, key_clt in zip(CIRCLES.values(), CLUSTERS.keys()):
+            #shapely areas, clt_shape
+            if shape == 'circle':
+                clt_shape = None
+                for cx,cy,r in areas:
+                    if clt_shape == None:
+                        clt_shape = Point([cx,cy]).buffer(r)
+                    else: 
+                        clt_shape = clt_shape.union(Point([cx,cy]).buffer(r))
+            elif shape == 'ellipse':
+                clt_shape = None
+                for ar in areas:
+                    if clt_shape == None:
+                        clt_shape = ar
+                    else:
+                        clt_shape = clt_shape.union(ar)
+            prepared_polygon = prep(clt_shape)
+            points   = [Point(positions[int(i)]) for i in spiked]
+            data     = zip(points, spiked)
+            N_filter = filter(lambda x: prepared_polygon.intersects(x[0]), data)
+            #Points in the cluster
+            N_filter = [int(N_filter[i][1]) for i in range(len(N_filter))]
+            if len(N_filter) > 0:
+                CLUSTERS[key_clt] = np.append(CLUSTERS[key_clt], N_filter)
+        return CLUSTERS, CIRCLES
+    else:
+        return {}, {}
+
+def new_cluster_dict(to_merge):
+    '''
+    Create a dictonary with the new merged clusters
+    Use networkx library
+    Return :
+    --------
+            dictionnary, where the keys are the new clusters ids and the values and lists of 
+            the old clusters ids to merge together
+    '''
+    G = nx.Graph()
+    G.add_edges_from(to_merge)
+    ret = {}
+    for i, clts in enumerate(nx.connected_components(G)):
+        ret[i] = clts
+    return ret
+
+def sector_mask(shape,centre,radius,angle_range):
+    """
+    Return a boolean mask for a circular sector. The start/stop angles in  
+    `angle_range` should be given in clockwise order.
+    """
+
+    x,y = np.ogrid[:shape[0],:shape[1]]
+    cx,cy = centre
+    tmin,tmax = np.deg2rad(angle_range)
+
+    # ensure stop angle > start angle
+    if tmax < tmin:
+            tmax += 2*np.pi
+
+    # convert cartesian --> polar coordinates
+    r2 = (x-cx)*(x-cx) + (y-cy)*(y-cy)
+    theta = np.arctan2(x-cx,y-cy) - tmin
+
+    # wrap angles between 0 and 2*pi
+    theta %= (2*np.pi)
+
+    # circular mask
+    circmask = r2 <= radius*radius
+
+    # angular mask
+    anglemask = theta <= (tmax-tmin)
+
+    return circmask*anglemask
+
+def merge_clusters(ids, positions, shape):
+    '''
+    Create dictionnaries for the merge clusters from the ids dictionnaries
+    
+    Parameters:
+    -----------
+    - ids       : Dict of dict, size number of clusters with neuron ids as keys of second dict
+                  values are None
+    - positions : array of size Nx2 all neurons positions
+    - areas     : string, 'ellipse' or 'circle'
+    Return :
+    --------
+    CLUSTERS, CIRCLES : 2 dictionnaries of size number of clusters, with clusters properties as 
+                        values; respectively list array of ids and arrays of circles properties
+                        (center_x, center_y, r) or shapely ellipses
+    '''
+    #get clusters ids and keep this order in a list
+    clusters_ids = np.array(ids.keys())
+    #Find which cluster to merge depending on the overlap of clusters
+    if shape == 'circle':
+        circles = dict()
+        centroids = []
+        for clt_id in clusters_ids:
+            n_idx = np.array(ids[clt_id].keys()).astype(int) - 1
+            circles[clt_id]     = smallest_circle(positions[n_idx])
+            centroids.append([circles[clt_id][0], circles[clt_id][1]])
+        centroids = np.array(centroids)
+        # distances of cluster centroid
+        distances = np.zeros(shape = (len(ids) , len(ids) ))
+        # clusters id
+        clusters  = np.zeros(shape = (len(ids) , len(ids), 2 ))
+        # sum of the two circles radii
+        radii   = np.zeros(shape = (len(ids) , len(ids) ))
+        for indexi, centeri in enumerate(centroids):
+            for indexj, centerj in enumerate(centroids):
+                if tuple(centeri) != tuple(centerj):
+                    distances[indexi,indexj] = vector_norm(centerj - centeri)
+                    radii[indexi,indexj]     = circles[clusters_ids[indexj]][-1] + circles[clusters_ids[indexi]][-1]
+                    clusters[indexi,indexj]  = tuple((clusters_ids[indexi], 
+                                                      clusters_ids[indexj]))
+        #merge if the distances the circles overlap
+        merge = (distances < radii) & (distances > 0)
+        
+        if len(clusters[merge]) > 0:
+            CLUSTERS = new_cluster_dict(clusters[merge])
+            CIRCLES = {}
+            for mclt, clts in CLUSTERS.iteritems():
+                #array of all neurons in the new clusters with NNGT ids starting at 0
+                _mclt_ = [ids[clt].keys() for clt in clts]
+                CLUSTERS[mclt] = np.array(list(itertools.chain(*_mclt_))).astype(int) - 1
+                #array of circles of new clusters
+                CIRCLES[mclt] = np.array([circles[clt] for clt in clts])
+            #clusters that didn't have to merge
+            keep = list(set(clusters_ids) - set(clusters[merge].flatten()))
+            l = len(CLUSTERS)+1
+            #array of neurons in this cluster, with NNGT ids starting at 0
+            CLUSTERS.update({i+l: np.array(ids[keep[i]].keys()).flatten().astype(int) - 1
+                             for i in range(len(keep))})
+            CIRCLES.update({i+l: np.array([circles[keep[i]]]) for i in range(len(keep))})
+
+        else:
+            #array of neurons in this cluster, with NNGT ids starting at 0
+            CLUSTERS = {i: np.array(ids.values()[i].keys()).flatten().astype(int) - 1 
+                        for i in range(len(clusters_ids))}
+            CIRCLES = {i: np.array([circles[clusters_ids[i]]]) for i in range(len(clusters_ids))}
+
+    elif shape ==  'ellipse':
+        ellipses = dict()
+        for clt_id in clusters_ids:
+            #nngt neuron ids in clt_id
+            n_idx = np.array(ids[clt_id].keys()).astype(int) - 1
+            #representative ellipse
+            A, c = smallest_ellipse(positions[n_idx])
+            ell = make_sh_ellipse(A,c)
+            ellipses[clt_id] = ell
+            
+        # clusters id
+        clusters  = np.zeros(shape = (len(ids) , len(ids), 2 ))
+        # overlap areas of cluster centroid
+        overlap = np.zeros(shape = (len(ids) , len(ids) ))
+        
+        for indexi,ki in enumerate(clusters_ids):
+            for indexj,kj in enumerate(clusters_ids):
+                if ki !=  kj:
+                    clusters[indexi,indexj]  = tuple([ki, kj])
+                    #overlap between the ellipses
+                    overlap[indexi,indexj] = ellipses[ki].intersection(ellipses[kj]).area
+        
+        #merge if the distances the circles overlap
+        merge = (overlap > 0.)
+        if len(clusters[merge]) > 0:
+            CLUSTERS = new_cluster_dict(clusters[merge])
+            CIRCLES = {}
+            #for new merged clt 'mclt' formed with old clusters 'clts'
+            for mclt, clts in CLUSTERS.iteritems():
+                #array of all neurons in the new clusters with NNGT ids starting at 0
+                _mclt_ = [ids[clt].keys() for clt in clts]
+                CLUSTERS[mclt] = np.array(list(itertools.chain(*_mclt_))).astype(int) - 1
+                #array of circles of new clusters
+                CIRCLES[mclt] = np.array([ellipses[clt] for clt in clts])
+            #clusters that didn't have to merge
+            keep = list(set(clusters_ids) - set(clusters[merge].flatten()))
+            l = len(CLUSTERS)+1
+            #array of neurons in this cluster, with NNGT ids starting at 0
+            CLUSTERS.update({i+l: np.array(ids[keep[i]].keys()).flatten().astype(int) - 1
+                             for i in range(len(keep))})
+            CIRCLES.update({i+l: np.array([ellipses[keep[i]]]) for i in range(len(keep))})
+
+        else:
+            #array of neurons in this cluster, with NNGT ids starting at 0
+            CLUSTERS = {i: np.array(ids.values()[i].keys()).flatten().astype(int) - 1 
+                        for i in range(len(clusters_ids))}
+            CIRCLES = {i: np.array([ellipses[clusters_ids[i]]]) for i in range(len(clusters_ids))}
+
+    return CLUSTERS, CIRCLES
+
+
+
 def Velocity_Ring_Analysis(activity, positions, hulls, bmin, 
                      step_buff, ttime, culture_radius, phi_lvl = 50, 
                      circular = False):
