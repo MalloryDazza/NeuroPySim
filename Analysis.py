@@ -1,10 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-#Network
-import nngt
-import nest 
-
 #Maths
 import numpy as np
 from scipy.signal import argrelextrema as localext
@@ -104,6 +100,62 @@ def PolygonPatch(polygon, **kwargs):
 
     """
     return PathPatch(PolygonPath(polygon), **kwargs)
+
+def load_raster(file_name):
+    '''
+    Return raster as a list of size N_neurons x N_spikes
+    '''
+    return_list = []
+    with open(file_name, "r") as fileobject:
+        for i, line in enumerate(fileobject):
+            if not line.startswith('#'):
+                lst = line.rstrip('\n').split(' ')
+                # !!! NEST ids start at 1 !!! 
+                return_list.append([int(lst[0]),float(lst[1]),float(lst[2]),float(lst[3])])
+        
+    NTXY = np.array(sorted(return_list, key = lambda x:x[1]))
+    senders = NTXY[:,0]
+    times   = NTXY[:,1]
+    pos     = NTXY[...,2:]
+        
+    positions   = [] # Neurons Positions as N X 2 array
+    activity    = [] # list of size N X number of spike
+        
+    for nn in set(senders):
+        nspk = np.where(senders == nn)[0]
+        tspk = times[nspk]
+        activity.append(tspk)
+        positions.append(pos[nspk[0]])
+
+    positions = np.array(positions).astype(float)
+    
+    return activity, positions
+
+def load_activity(file_name):
+    '''
+    Return raster as a list of size N_neurons x N_spikes
+    '''
+    return_list = []
+    with open(file_name, "r") as fileobject:
+        for i, line in enumerate(fileobject):
+            if not line.startswith('#'):
+                lst = line.rstrip('\n').split(' ')
+                # !!! NEST ids start at 1 !!! 
+                return_list.append([int(lst[0]),float(lst[1])])
+        
+    NTXY = np.array(sorted(return_list, key = lambda x:x[1]))
+    senders = NTXY[:,0]
+    times   = NTXY[:,1]
+        
+    activity = [] 
+        
+    for nn in set(senders):
+        nspk = np.where(senders == nn)[0]
+        tspk = times[nspk]
+        activity.append(tspk)
+    
+    return activity
+
 
 def mean_simps(x, y, x1, x2):
     '''
