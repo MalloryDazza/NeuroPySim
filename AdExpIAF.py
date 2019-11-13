@@ -117,10 +117,18 @@ def V_nv(w):
         lw[valid]  = np.real(lambertw(arg_lw[valid], -1))
         return EL + (Ie - w)/gL - DT*lw
 
-def w_Vnull(Vs, I):
-    gL = p_RS_osc["g_L"]
-    EL = p_RS_osc["E_L"]
-    VT = p_RS_osc["V_th"]
-    DT = p_RS_osc["Delta_T"]
-    Ie = p_RS_osc["I_e"]
+def w_Vnull(params, Vs, I=0):
+    '''
+    return the V nullcline in the 
+    AdExp model where nest defaults 
+    values and used if not present 
+    in params for all values of the 1D array Vs
+    '''
+    p_def = nest.GetDefaults('aeif_psc_alpha')
+    p_def.update(params)
+    gL = p_def["g_L"]
+    EL = p_def["E_L"]
+    VT = p_def["V_th"]
+    DT = p_def["Delta_T"]
+    Ie = p_def["I_e"]
     return -gL * ((Vs-EL) - DT*np.exp((Vs-VT) / DT)) + Ie + I
