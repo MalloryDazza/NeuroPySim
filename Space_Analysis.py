@@ -4,12 +4,15 @@
 #Network
 import nngt
 import nest 
+import networkx as nx
 
 #Maths
 import numpy as np
+import numpy.linalg as la
 from scipy.signal import argrelextrema as localext
 from sklearn.cluster import DBSCAN
 import scipy.stats as sc
+from scipy.interpolate import interp1d
 
 #plot
 import matplotlib.pyplot as plt
@@ -18,6 +21,9 @@ import itertools as it
 #Shapely
 from shapely.geometry import Point, MultiPoint, Polygon, LineString, MultiLineString
 from shapely.prepared import prep
+import shapely
+
+import Analysis as anl
 
 """Paths and patches"""
 
@@ -131,7 +137,7 @@ def convolve_gauss(fr, sigma, dt, crop=5.):
     # create the gaussian kernel
     tkernel  = np.arange(-crop*sigma, crop*sigma + dt, dt)
     ekernel  = np.exp(-(tkernel/(2*sigma))**2)
-    #ekernel /= np.sum(ekernel)
+    ekernel /= np.sum(ekernel)
     # convolve
     fr = np.array(convolve(fr, ekernel, "same"))
     return fr
@@ -247,7 +253,7 @@ def First_To_Fire(Activity_Raster, time_end, time_start):
             ret.append(i)
     return ret 
     
-def Ids_in_cluster(burst_NXY, epsilon, neighbors, n_jobs):
+def Ids_in_cluster(burst_NXY, epsilon, neighbors, n_jobs = 2):
     '''
     DBSCAN Cluster detection function
     
@@ -390,36 +396,7 @@ def directions_toplot(a):
         return [0,1,2,3]
     elif a < 2*np.pi:
         return [2,3,4,5]
-
-def is_center(ftf_positions, all_positions, to_spike_or_not_to_spike):
-    '''
-    ftf_positions : coordinates of the first to fire neurons to test
-    
-    all_positions : all nueonrs coordinates
-    
-    to_spike_or_not_to_spike : in the same order as all_positions, wether the neuron spiked or not
-    
-    return True if the neurons are firing in a small region of space
-    '''
-    ftf_mp = MultiPoint(ftf_positions)
-    ftf_hull = ftf_mp.convex_hull
-    
-    active = 0
-    non_active = 0
-    
-    for coord, spk in zip(all_positions,to_spike_or_not_to_spike):
-        a = Point(coord)
-        if a.intersects(ftf_hull):
-            if spk:
-                active += 1
-            else:
-                non_active += 1
-
-    if active >= non_active:
-        return ftf_hull
-    else:
-        return None    
-        
+   
 def span_culture(surfaces, culture):
     '''
     look if the surfaces (array of polygons) span the culture (polygon)
@@ -506,6 +483,36 @@ def make_sh_ellipse(A, c, add = .2 ):
     
     return ellr.buffer(add)
 
+def load_data(spike_file, tstart, tstop):
+    '''
+    Load data into  NTXY lists
+    
+    Parameters:
+    -----------
+    - Spike_file: string, file where the activity is stored (column neuron id, 
+                  (NEST) spike time, positions X, Y)
+    - tstart: float, starting time of the analysis 
+    - tstop: float , ending time of the analysis
+    
+    Return:
+    -------
+            1 lists of 4 elements: neurons (NESST) id, spike time, 
+            positions X, positions Y
+    '''                 
+    
+    return_list = []
+    with open(spike_file, "r") as fileobject:
+        for i, line in enumerate(fileobject):
+            if not line.startswith('#'):
+                lst = line.rstrip('\n').split(' ')
+                # !!! NEST ids start at 1 !!! 
+                if float(lst[1]) > tstart and float(lst[1]) < tstop:
+                    return_list.append([int(lst[0]),float(lst[1]),float(lst[2]),float(lst[3])])
+    NTXY = np.array(sorted(return_list, key = lambda x:x[1]))
+    return_list = None
+    
+    return NTXY
+    
 def Spatial_Clustering_Analysis(NXY, positions, epsilon, neighbors, clt_min_size = 5, 
                                 shape = 'ellipse'):
     '''
@@ -515,7 +522,7 @@ def Spatial_Clustering_Analysis(NXY, positions, epsilon, neighbors, clt_min_size
     Parameters:
     -----------
     - NXY          : array like, of size N_spike x 3 with first colum the neuron ids (NEST), 
-                     second and third the neurons posiions
+                     second and third the neurons positions
     - positions    : array of size N_neurons x 2: positions of all neuronsordered with NEST ids
     - epsilon      : float, DBSCAN paramter
     - neighbors    : int, DBSCAN paramter
@@ -529,7 +536,7 @@ def Spatial_Clustering_Analysis(NXY, positions, epsilon, neighbors, clt_min_size
                         (center_x, center_y, r)
     '''
     #DBSCAN Clustering - NEST ids start at 1
-    ids = Ids_in_cluster(NXY, epsilon, neighbors, n_jobs = 8)
+    ids = Ids_in_cluster(NXY, epsilon, neighbors)
     
     #Remove small clusters
     if ids:
@@ -554,9 +561,9 @@ def Spatial_Clustering_Analysis(NXY, positions, epsilon, neighbors, clt_min_size
                 CIRCLES  = {0: np.array([make_sh_ellipse(A,c)])}
                 
         # NNGT ids of neurons that spiked but not in clusters
-        spiked = set(NXY[:,0] - 1) - set(itertools.chain(*CLUSTERS.values()))
-        ###print(len(set( itertools.chain(*CLUSTERS.values()))), 
-         ###     len(list(itertools.chain(*CLUSTERS.values())))      )
+        spiked = set(NXY[:,0] - 1) - set(it.chain(*CLUSTERS.values()))
+        ###print(len(set( it.chain(*CLUSTERS.values()))), 
+        ###     len(list(it.chain(*CLUSTERS.values())))      )
         # add in clusters, spiking neurons that has not been detected in the cluster
         for areas, key_clt in zip(CIRCLES.values(), CLUSTERS.keys()):
             #shapely areas, clt_shape
@@ -680,7 +687,7 @@ def merge_clusters(ids, positions, shape):
             for mclt, clts in CLUSTERS.iteritems():
                 #array of all neurons in the new clusters with NNGT ids starting at 0
                 _mclt_ = [ids[clt].keys() for clt in clts]
-                CLUSTERS[mclt] = np.array(list(itertools.chain(*_mclt_))).astype(int) - 1
+                CLUSTERS[mclt] = np.array(list(it.chain(*_mclt_))).astype(int) - 1
                 #array of circles of new clusters
                 CIRCLES[mclt] = np.array([circles[clt] for clt in clts])
             #clusters that didn't have to merge
@@ -728,7 +735,7 @@ def merge_clusters(ids, positions, shape):
             for mclt, clts in CLUSTERS.iteritems():
                 #array of all neurons in the new clusters with NNGT ids starting at 0
                 _mclt_ = [ids[clt].keys() for clt in clts]
-                CLUSTERS[mclt] = np.array(list(itertools.chain(*_mclt_))).astype(int) - 1
+                CLUSTERS[mclt] = np.array(list(it.chain(*_mclt_))).astype(int) - 1
                 #array of circles of new clusters
                 CIRCLES[mclt] = np.array([ellipses[clt] for clt in clts])
             #clusters that didn't have to merge
@@ -748,7 +755,36 @@ def merge_clusters(ids, positions, shape):
     return CLUSTERS, CIRCLES
 
 
-
+def average_curve( data_x, data_y, IC , FC, x ):
+    '''
+    Compute the average curve given by different realisation
+    
+    Parameters:
+    -----------
+    data_x : array N_points X N_realisation , x coordiantes of 
+    every realisation of the measured curve
+    daya_y : array N_points X N_realisation , corresponding y coordinates
+    IC : tuple, values of x and y for the initial condition
+    FC : tuple, values of x and y for the final condition
+    x : 1d array, abscissa values where the curve will be computed
+    '''
+    
+    y = np.zeros(x.shape)
+    
+    for s,e in zip(data_x,data_y):
+        S = [IC[0]]
+        S.extend(s)
+        S.append(FC[0])
+        
+        E = [IC[1]]
+        E.extend(e)
+        E.append(FC[1])
+        
+        f = interp1d(S, E, fill_value = [np.NaN])
+        
+        y +=  f(x)
+    return y / float(len(data_x))
+    
 def Velocity_Ring_Analysis(activity, positions, hulls, bmin, 
                      step_buff, ttime, culture_radius, phi_lvl = 50, 
                      circular = False):

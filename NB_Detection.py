@@ -7,9 +7,11 @@ import matplotlib.pyplot as plt
 from scipy.signal import argrelextrema as localext
 from scipy.signal import convolve
 from scipy.integrate import simps
+
 '''
-Temporal Network Burst Detection
+Temporal Network Burst Detection - Based on Firing rate 
 '''
+
 def open_data(name):
     '''
     Collect the data

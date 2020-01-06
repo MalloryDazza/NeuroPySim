@@ -6,6 +6,7 @@ import numpy as np
 from scipy.signal import argrelextrema as localext
 from sklearn.cluster import DBSCAN
 from scipy.signal import convolve
+from scipy.interpolate import interp1d
 
 #plot
 import matplotlib.pyplot as plt
@@ -101,60 +102,97 @@ def PolygonPatch(polygon, **kwargs):
     """
     return PathPatch(PolygonPath(polygon), **kwargs)
 
-def load_raster(file_name):
+def load_data(spike_file, tmin=-np.inf, tmax=np.inf, with_space = True):
+    '''
+    Load data into  NTXY lists
+    
+    Parameters:
+    -----------
+    - Spike_file: string, file where the activity is stored (column neuron id, 
+                  (NEST) spike time, positions X, Y)
+    - tstart: float, starting time of the analysis 
+    - tstop: float , ending time of the analysis
+    - with_space = bool, 
+    Return:
+    -------
+            1 lists of 4 elements: neurons (NESST) id, spike time, 
+            positions X, positions Y
+    '''                 
+    if with_space == True:
+        return_list = []
+        with open(spike_file, "r") as fileobject:
+            for i, line in enumerate(fileobject):
+                if not line.startswith('#'):
+                    lst = line.rstrip('\n').split(' ')
+                    # !!! NEST ids start at 1 !!! 
+                    if float(lst[1]) > tmin and float(lst[1]) < tmax:
+                        return_list.append([int(lst[0]),float(lst[1]),float(lst[2]),float(lst[3])])
+        NTXY = np.array(sorted(return_list, key = lambda x:x[1]))
+        return_list = None
+        
+    else:
+        return_list = []
+        with open(spike_file, "r") as fileobject:
+            for i, line in enumerate(fileobject):
+                if not line.startswith('#'):
+                    lst = line.rstrip('\n').split(' ')
+                    # !!! NEST ids start at 1 !!! 
+                    if float(lst[1]) > tmin and float(lst[1]) < tmax:
+                        return_list.append([int(lst[0]),float(lst[1])])
+        NTXY = np.array(sorted(return_list, key = lambda x:x[1]))
+        return_list = None
+        
+    return NTXY
+
+def load_raster(file_name, tmin=-np.inf, tmax=np.inf, with_space = True):
     '''
     Return raster as a list of size N_neurons x N_spikes
     '''
+    if tmin > tmax:
+        raise Exception('BadProperty tmin has to be smaller than tmax')
     return_list = []
     with open(file_name, "r") as fileobject:
         for i, line in enumerate(fileobject):
             if not line.startswith('#'):
                 lst = line.rstrip('\n').split(' ')
-                # !!! NEST ids start at 1 !!! 
-                return_list.append([int(lst[0]),float(lst[1]),float(lst[2]),float(lst[3])])
-        
-    NTXY = np.array(sorted(return_list, key = lambda x:x[1]))
-    senders = NTXY[:,0]
-    times   = NTXY[:,1]
-    pos     = NTXY[...,2:]
-        
-    positions   = [] # Neurons Positions as N X 2 array
-    activity    = [] # list of size N X number of spike
-        
-    for nn in set(senders):
-        nspk = np.where(senders == nn)[0]
-        tspk = times[nspk]
-        activity.append(tspk)
-        positions.append(pos[nspk[0]])
+                if with_space == True:
+                    # !!! NEST ids start at 1 !!! 
+                    if float(lst[1]) > tmin and float(lst[1]) < tmax:
+                        return_list.append([int(lst[0]),float(lst[1]),float(lst[2]),float(lst[3])])
+                else:
+                    if float(lst[1]) > tmin and float(lst[1]) < tmax:
+                        return_list.append([int(lst[0]),float(lst[1])])
 
-    positions = np.array(positions).astype(float)
-    
-    return activity, positions
-
-def load_activity(file_name):
-    '''
-    Return raster as a list of size N_neurons x N_spikes
-    '''
-    return_list = []
-    with open(file_name, "r") as fileobject:
-        for i, line in enumerate(fileobject):
-            if not line.startswith('#'):
-                lst = line.rstrip('\n').split(' ')
-                # !!! NEST ids start at 1 !!! 
-                return_list.append([int(lst[0]),float(lst[1])])
-        
     NTXY = np.array(sorted(return_list, key = lambda x:x[1]))
-    senders = NTXY[:,0]
+    senders = NTXY[:,0].astype(int)
     times   = NTXY[:,1]
-        
-    activity = [] 
-        
-    for nn in set(senders):
-        nspk = np.where(senders == nn)[0]
-        tspk = times[nspk]
-        activity.append(tspk)
     
-    return activity
+    neurons, count = np.unique(senders, return_counts = True)
+    neurons = np.sort(neurons)
+    length = np.max(count)
+    
+    activity = np.zeros((len(neurons),length))
+    
+    if with_space == True:
+        pos     = NTXY[...,2:]
+        positions = []
+    
+    for i,nn in enumerate(neurons):
+        msk = (senders == nn)
+        tspk = times[msk]
+        l = len(tspk)
+        if l < length:
+            tspk = np.append(tspk, [np.NaN]*(length-l))
+        activity[i] = tspk
+        if with_space == True:
+            positions.append(pos[nspk[0]])
+            
+    if with_space == True:
+        return activity, np.array(positions).astype(float)
+        
+    else:
+        return activity
+
 
 
 def mean_simps(x, y, x1, x2):
@@ -226,7 +264,7 @@ def all_time_neuron_phase(Activity_Raster, times):
         isi = np.append(np.diff(r),[np.inf])
         idx = np.digitize(times,r) - 1
         ph = (times - r[idx]) / isi[idx]
-        idx = np.where(ph < 0)[0]
+        idx = np.isnan(ph)
         ph[idx] = 0
         phases[i] = ph
         
@@ -264,7 +302,8 @@ def single_time_neuron_phase(Activity_Raster, time, Kuramoto = True):
     else:
         return np.array(phi)
 
-def all_time_network_phase(Activity_Raster, times, smooth = False):
+def all_time_network_phase(Activity_Raster, times, smooth = False,
+                           after_spike_value=0.5):
     '''
     Compute the phase of all neurons at 'times'
     
@@ -277,6 +316,9 @@ def all_time_network_phase(Activity_Raster, times, smooth = False):
                        times at which we compute the phase
     - smooth        : bool
                         Wether to smooth the phase by gaussian convolution
+    - after_spike_value : Float
+                        Phase value to assign when a neurons stopped spiking
+                        and before he starts
         return :
         --------
                 phase of the neurons phi = (t-t_k)/(t_k-t_k-1) as function of time
@@ -288,14 +330,14 @@ def all_time_network_phase(Activity_Raster, times, smooth = False):
         isi = np.append(np.diff(r),[np.inf])
         idx = np.digitize(times,r) - 1
         ph = (times - r[idx]) / isi[idx]
-        idx = np.where(ph < 0)[0]
-        ph[idx] = 0
+        msk = (times < np.nanmin(r)) + (times >= np.nanmax(r))
+        ph[msk] = after_spike_value
         phases += ph
     phases /= len(Activity_Raster)
     
     if smooth == True:
         dt = times[1]-times[0]
-        phases = convolve_gauss(phases, sigma = dt, dt = dt, crop = 2*dt )
+        phases = convolve_gauss(phasess, sigma = dt, dt = dt, crop = 2*dt )
     
     return np.array(phases)
 
@@ -389,7 +431,10 @@ def Burst_times(Activity_Raster, time_array, th_high = 0.6,
     #Compute the network phase
     dt = time_array[1] - time_array[0]
     Net_phi = all_time_network_phase(Activity_Raster, time_array)
-    #Net_phi = convolve_gauss(Net_phi, sigma = 5*dt, dt=dt, crop = 5.)
+    if plot == True:
+        f,a = plt.subplots()
+        a.plot(time_array, Net_phi, 'k', alpha = .6)
+    Net_phi = convolve_gauss(Net_phi, sigma = 2*dt, dt=dt, crop = 4.)
     
     #f,a = plt.subplots()
     #a.plot(time_array,Net_phi)
@@ -525,7 +570,7 @@ def Burst_times(Activity_Raster, time_array, th_high = 0.6,
         time_bursts = [time_array[i] for i in idx_bursts]
 
         if len(time_bursts) != 0:
-            N_burst = len(time_bursts) / 2 
+            N_burst = int(len(time_bursts) / 2 )
             ibi = np.mean(np.diff(time_bursts)[range(1,2*N_burst-1,2)])
             if time_bursts[-1] > time_array[-1]-ibi:
                 time_bursts.pop(-1)
@@ -536,7 +581,6 @@ def Burst_times(Activity_Raster, time_array, th_high = 0.6,
                                 for i in range(0,len(time_bursts)-1,2)]
 
             if plot == True:
-                f,a = plt.subplots()
                 a.plot(time_array, Net_phi)
                 a.vlines(time_bursts, [0]*len(time_bursts), [1]*len(time_bursts), ['r','g'])
                 plt.plot()
@@ -575,3 +619,211 @@ def First_To_Fire(Activity_Raster, time_end, time_start):
             ret.append(i)
     return ret
     
+def first_to_fire_probability(spike_file, time_bursts, first_spike, threshold):
+    '''
+    Compute the probability for neurons to be class I or II first to fire
+    
+    Parameters:
+    -----------
+    spike_file: string, file to get the activity
+    time_bursts: 1d array of float starting time of the bursts (to use as reference)
+    first_spike: 1d array ; first spike of the burst (or time near it) 
+    threshold: float ; time reference after the burst starts for class II neurons
+    
+    Return:
+    -------
+        Prob1, Prob2 as 2 Nd array with the probability for each neurons
+        
+    Note: Class I is from first spike to time_burts-1, class II is 2 ms around tim_bursts
+    '''
+    
+    return_list = []
+    with open(spike_file, "r") as fileobject:
+        for i, line in enumerate(fileobject):
+            if not line.startswith('#'):
+                lst = line.rstrip('\n').split(' ')
+                return_list.append([int(lst[0]),float(lst[1])])
+            
+    NT      = np.array(sorted(return_list, key = lambda x:x[1]))
+    neurons = set(NT[:,0])
+    Prob1, Prob2 = np.zeros(len(neurons)), np.zeros(len(neurons))
+    neurons = np.arange(1,len(neurons)+1)
+    
+    fspk = []
+    for bstart,tb in zip(first_spike, time_bursts):
+        spk_count = []
+        #take the first spike of each neurons
+        for nrn in neurons:
+            msk = NT[:,0] == nrn
+            i = np.where(NT[:,1][msk]>bstart)[0][0]
+            spk_count.append(NT[:,1][msk][i] - tb)
+        spk_count = np.array(spk_count)
+        
+        mask = (spk_count < -1)
+        Prob1[mask] += 1.
+        
+        mask = (spk_count < threshold) & ~mask
+        Prob2[mask] += 1.
+    
+    return Prob1/float(len(time_bursts)), Prob2/float(len(time_bursts))
+
+def first_spk_cum_activity(spike_file, time_bursts, first_spike, x, bin_size):
+    '''
+    Compute the cumulative activity (with an histogram) as function of time,
+    with linear extrapolation in between points.
+    
+    Parameters:
+    -----------
+    spike_file: string, file to get the activity
+    time_bursts: 1d array of float starting time of the bursts (to use as reference)
+    first_spike: 1d array, first spike of each burst (or time near and before it))
+    x: abscisse points for linear approx
+    bin_size: histogram bin size
+    
+    return :
+    -------- 
+            1d array 
+    '''
+    return_list = []
+    with open(spike_file, "r") as fileobject:
+        for i, line in enumerate(fileobject):
+            if not line.startswith('#'):
+                lst = line.rstrip('\n').split(' ')
+                return_list.append([int(lst[0]),float(lst[1])])
+            
+    NT = np.array(sorted(return_list, key = lambda x:x[1]))
+    
+    neurons, count = np.unique(NT[:,0], return_counts = True)
+    norm    = float(len(neurons))
+    length = np.max(count)
+    
+    activity = np.zeros((int(norm),length))
+    for nrn in neurons:
+        msk = NT[:,0] == nrn
+        spk = NT[:,1][msk]
+        l = len(spk)
+        if l < length:
+            spk = np.append(spk, [np.NaN]*(length-l))
+        activity[int(nrn-1)] = spk
+        
+    fspk = []
+    for bstart,tb in zip(first_spike, time_bursts):
+        spk_count = activity - bstart
+        mask_count = np.ma.masked_less_equal(spk_count, 0)
+        spk_count = np.nanmin(mask_count, axis = 1) - tb + bstart
+        print(spk_count[:5])
+        bins = np.arange(np.min(spk_count)-1, np.max(spk_count)+1, bin_size)
+        h,b = np.histogram(spk_count, bins = bins)
+        b = b[:-1] + (b[1]-b[0])/2.
+        h = h.cumsum() / norm
+        f = interp1d(b, h)
+        y = [0.]*np.sum((x<b[0]))
+        msk = (x > b[0]) & (x < b[-1])
+        y.extend(list(f(x[msk])))
+        y.extend([1.]*(len(x)-len(y)))
+        fspk.append( y )
+        
+    return np.array(fspk)
+
+def closest_spk_cum_activity(spike_file, time_ref, x, bin_size, 
+                            tmin = 0., tmax = np.inf):
+    '''
+    Compute the cumulative activity (with an histogram) as function of time,
+    with linear extrapolation in between points of the cloest points of 
+    specific reference.
+    
+    Parameters:
+    -----------
+    spike_file: string, file to get the activity
+    time_ref: 1d array of float of times to use as reference
+    x: abscisse points for linear approx
+    bin_size: histogram bin size
+    tmin, tmax : floats , time boundaries to load less data
+    
+    return :
+    -------- 
+            1d array 
+    '''
+    '''
+    NT = load_data(spike_file, tmin, tmax, with_space = False)
+    
+    neurons, count = np.unique(NT[:,0], return_counts = True)
+    norm           = float(len(neurons))
+    length = np.max(count)
+    
+    activity = np.zeros((int(norm),length))
+    
+    for i,nrn in enumerate(neurons):
+        msk = NT[:,0] == nrn
+        spk = NT[:,1][msk]
+        l = len(spk)
+        if l < length:
+            spk = np.append(spk, [np.NaN]*(length-l))
+        activity[i] = spk
+    '''
+    
+    activity = load_raster(spike_file, tmin=tmin,
+                           tmax=tmax, with_space = False)
+    norm           = float(len(activity))
+    fspk = []
+    
+    for tr in time_ref:
+        spk_count = activity - tr
+        idx = np.nanargmin(np.abs(spk_count), axis = 1)
+        spk_count = spk_count[...,idx].diagonal()
+        b = np.arange(np.min(spk_count)-1, np.max(spk_count)+1, bin_size)
+        h,b = np.histogram(spk_count, bins = b)
+        b = b[:-1] + (b[1]-b[0])/2.
+        h = h.cumsum() / norm
+        f = interp1d(b, h)
+        y = [0.]*np.sum((x<b[0]))
+        msk = (x > b[0]) & (x < b[-1])
+        y.extend(list(f(x[msk])))
+        y.extend([1.]*(len(x)-len(y)))
+        fspk.append( y )
+
+    return np.array(fspk)
+
+def probability_distribution(cumulative_distribution, x):
+    '''
+    Compute the probability distribution from the cumulative as a 
+    differential
+    '''
+    dx = np.diff(x)
+    x = x[:-1] + dx/2.
+    
+    dc = np.diff(cumulative_distribution)
+    
+    dc /= dx 
+    
+    return x, dc/np.sum(dc)
+    
+def average_curve( data_x, data_y, IC , FC, x ):
+    '''
+    Compute the average curve given by different realisation
+    
+    Parameters:
+    -----------
+    data_x : array N_points X N_realisation , x coordiantes of 
+    every realisation of the measured curve
+    daya_y : array N_points X N_realisation , corresponding y coordinates
+    IC : tuple, values of x and y for the initial condition
+    FC : tuple, values of x and y for the final condition
+    x : 1d array, abscissa values where the curve will be computed
+    '''
+    
+    y = np.zeros(x.shape)
+    
+    for s,e in zip(data_x,data_y):
+        S = [IC[0]]
+        S.extend(s)
+        S.append(FC[0])
+        
+        E = [IC[1]]
+        E.extend(e)
+        E.append(FC[1])
+        
+        f = interp1d(S, E, fill_value = [np.NaN])
+        
+        y +=  f(x)
+    return y / float(len(data_x))

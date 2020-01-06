@@ -3,7 +3,8 @@ import dense as ds
 import numpy as np 
 import matplotlib.pyplot as plt
 
-def spatial_activity_fromfile(activity_file, dt, tmin, tmax, ncol, nrow, show = True, save_file = None):
+def spatial_activity_fromfile(activity_file, dt, tmin, tmax, ncol, nrow,
+                                show = True, save_file = None):
     '''
     '''
     return_list = []
@@ -56,12 +57,9 @@ def spatial_activity_fromfile(activity_file, dt, tmin, tmax, ncol, nrow, show = 
         axa[line][column].set_title (str(int(time))+'ms')
         axa[line][column].set_aspect('equal')
         
-
         if line < nrow - 1:
-
             axa[line][column].set_xticklabels([])
         elif line == nrow - 1:
-
             axa[line][column].set_xlabel('x ($\mu$m)')
             
         if column != 0:
