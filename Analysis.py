@@ -117,7 +117,7 @@ def load_data(spike_file, tmin=-np.inf, tmax=np.inf, with_space = True):
     -------
             1 lists of 4 elements: neurons (NESST) id, spike time, 
             positions X, positions Y
-    '''                 
+    '''
     if with_space == True:
         return_list = []
         with open(spike_file, "r") as fileobject:
@@ -175,7 +175,7 @@ def load_raster(file_name, tmin=-np.inf, tmax=np.inf, with_space = True):
     
     if with_space == True:
         pos     = NTXY[...,2:]
-        positions = []
+    positions = []
     
     for i,nn in enumerate(neurons):
         msk = (senders == nn)
@@ -185,14 +185,13 @@ def load_raster(file_name, tmin=-np.inf, tmax=np.inf, with_space = True):
             tspk = np.append(tspk, [np.NaN]*(length-l))
         activity[i] = tspk
         if with_space == True:
-            positions.append(pos[nspk[0]])
+            positions.append(pos[msk][0])
             
     if with_space == True:
         return activity, np.array(positions).astype(float)
         
     else:
         return activity
-
 
 
 def mean_simps(x, y, x1, x2):
@@ -251,6 +250,29 @@ def convolve_gauss(fr, sigma, dt, crop=5.):
     fr = np.array(convolve(fr, ekernel, "same"))
     return fr
 
+def all_time_neuron_noreset_phase(Activity_Raster, times):
+    '''
+    Compute the phase without afterspike reset
+    at times (1d array) for all neurons
+    
+            !!! times must not be too long !!!
+            
+    '''
+    phases = np.zeros(shape = (len(Activity_Raster),len(times)))
+    for i,r in enumerate(Activity_Raster):
+        r = np.array(r)
+        isi = np.append(np.diff(r),[np.inf])
+        # indices start at -1 before the first spike, with ISI being -inf
+        # the phase starts at -zero
+        idx = np.digitize(times,r) - 1
+        ph = (times - r[idx]) / isi[idx]
+        idx[idx<0] = 0
+        ph += idx
+        idx = np.isnan(ph)
+        ph[idx] = 0
+        phases[i] = ph
+    return phases
+
 def all_time_neuron_phase(Activity_Raster, times):
     '''
     Compute the phase at times (1d array) for all neurons
@@ -262,12 +284,13 @@ def all_time_neuron_phase(Activity_Raster, times):
     for i,r in enumerate(Activity_Raster):
         r = np.array(r)
         isi = np.append(np.diff(r),[np.inf])
+        # indices start at -1 before the first spike, with ISI being -inf
+        # the phase starts at -zero
         idx = np.digitize(times,r) - 1
         ph = (times - r[idx]) / isi[idx]
         idx = np.isnan(ph)
         ph[idx] = 0
         phases[i] = ph
-        
     return phases
 
 def single_time_neuron_phase(Activity_Raster, time, Kuramoto = True):
@@ -393,6 +416,7 @@ def mean_direct(y, x, x1, x2):
     
     return np.mean(y)
     
+
 def Burst_times(Activity_Raster, time_array, th_high = 0.6, 
                 th_low = 0.4, ibi_th = 0.9, plot = False):
     '''
@@ -434,7 +458,7 @@ def Burst_times(Activity_Raster, time_array, th_high = 0.6,
     if plot == True:
         f,a = plt.subplots()
         a.plot(time_array, Net_phi, 'k', alpha = .6)
-    Net_phi = convolve_gauss(Net_phi, sigma = 2*dt, dt=dt, crop = 4.)
+    # ~ Net_phi = convolve_gauss(Net_phi, sigma = 2*dt, dt=dt, crop = 4.)
     
     #f,a = plt.subplots()
     #a.plot(time_array,Net_phi)
@@ -447,7 +471,7 @@ def Burst_times(Activity_Raster, time_array, th_high = 0.6,
     mask_dw = (Net_phi < th_low)
     ph_dw = Net_phi[mask_dw]
     min_idx = localext(ph_dw, np.less)[0]
-    
+    print(min_idx)
     if len(ph_up) == 0 or len(ph_dw) == 0:
         print('No oscillations')
     else:
@@ -532,7 +556,7 @@ def Burst_times(Activity_Raster, time_array, th_high = 0.6,
                 #if idx[0] == min_idx[0] and i == 1:
                     #a.vlines(times[grped_idx], [0.5], [.8], 'k')
                     #a.vlines(times[grped_idx][gold_idx], [0.8], [1.], 'grey')
-        plt.show()
+
         time_bursts.sort()
         idx_bursts = [np.where(time_array == tb )[0][0] for tb in time_bursts]
         added_idx = check_minmax(idx_bursts)
@@ -572,28 +596,25 @@ def Burst_times(Activity_Raster, time_array, th_high = 0.6,
         if len(time_bursts) != 0:
             N_burst = int(len(time_bursts) / 2 )
             ibi = np.mean(np.diff(time_bursts)[range(1,2*N_burst-1,2)])
-            if time_bursts[-1] > time_array[-1]-ibi:
-                time_bursts.pop(-1)
-                time_bursts.pop(-1)
-            time_bursts = [[time_bursts[i],time_bursts[i+1]] 
+            #if time_bursts[-1] > time_array[-1]-ibi:
+                #time_bursts.pop(-1)
+                #time_bursts.pop(-1)
+            time_bursts = [[time_bursts[i],time_bursts[i+1]]
                                 for i in range(0,len(time_bursts)-1,2)]
-            idx_bursts = [[idx_bursts[i],idx_bursts[i+1]] 
+            idx_bursts = [[idx_bursts[i],idx_bursts[i+1]]
                                 for i in range(0,len(time_bursts)-1,2)]
-
             if plot == True:
                 a.plot(time_array, Net_phi)
                 a.vlines(time_bursts, [0]*len(time_bursts), [1]*len(time_bursts), ['r','g'])
-                plt.plot()
 
         else:
             print('No burst detected')
             if plot == True:
                 f,a = plt.subplots()
                 a.plot(time_array, Net_phi)
-                plt.plot()
     
         return np.array(time_bursts), Net_phi
-    
+
 def First_To_Fire(Activity_Raster, time_end, time_start):
     '''
     Find neurons that fire before burst
@@ -711,7 +732,6 @@ def first_spk_cum_activity(spike_file, time_bursts, first_spike, x, bin_size):
         spk_count = activity - bstart
         mask_count = np.ma.masked_less_equal(spk_count, 0)
         spk_count = np.nanmin(mask_count, axis = 1) - tb + bstart
-        print(spk_count[:5])
         bins = np.arange(np.min(spk_count)-1, np.max(spk_count)+1, bin_size)
         h,b = np.histogram(spk_count, bins = bins)
         b = b[:-1] + (b[1]-b[0])/2.
@@ -744,27 +764,10 @@ def closest_spk_cum_activity(spike_file, time_ref, x, bin_size,
     -------- 
             1d array 
     '''
-    '''
-    NT = load_data(spike_file, tmin, tmax, with_space = False)
-    
-    neurons, count = np.unique(NT[:,0], return_counts = True)
-    norm           = float(len(neurons))
-    length = np.max(count)
-    
-    activity = np.zeros((int(norm),length))
-    
-    for i,nrn in enumerate(neurons):
-        msk = NT[:,0] == nrn
-        spk = NT[:,1][msk]
-        l = len(spk)
-        if l < length:
-            spk = np.append(spk, [np.NaN]*(length-l))
-        activity[i] = spk
-    '''
     
     activity = load_raster(spike_file, tmin=tmin,
                            tmax=tmax, with_space = False)
-    norm           = float(len(activity))
+    norm     = float(len(activity))
     fspk = []
     
     for tr in time_ref:
@@ -827,3 +830,23 @@ def average_curve( data_x, data_y, IC , FC, x ):
         
         y +=  f(x)
     return y / float(len(data_x))
+    
+def LogBinning_Histogram(data, bins_number):
+    '''
+    Compute the histogram according to a logarithmic binning of the data
+    
+    parameters : 
+    ------------
+    
+    data : 1d array ; data points
+    
+    bins_number : int, number of bins
+    '''
+    
+    c = np.nanmax(data)**(1./(bins_number))
+
+    bins = c**np.arange(1,bins_number+1,1)
+    
+    hist, bins = np.histogram(data, bins)
+    
+    return hist, bins

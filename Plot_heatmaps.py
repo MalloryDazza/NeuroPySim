@@ -155,12 +155,18 @@ Param_name = None):
         convolved  = norm(np.ma.masked_array(convolved, mask=~circ_mask))
         
         if where_to_plot == 'heatmap':
-            heatmap = ax.imshow(convolved, aspect='equal', extent=(xmin-0.5*dx, xmax+0.5*dx, ymin-0.5*dx, ymax+0.5*dx), vmin=np.min(convolved), vmax=np.max(convolved), origin="lower", cmap = heatmap_map)
+            
+            heatmap = ax.imshow(convolved, aspect='equal', 
+            extent=(xmin-0.5*dx, xmax+0.5*dx, ymin-0.5*dx, ymax+0.5*dx),
+            vmin=np.min(convolved), vmax=np.max(convolved),
+            origin="lower", cmap = heatmap_map)
+             
             cb = plt.colorbar(heatmap, ax=ax)
             cb.set_label('Normalized' + Param_name)
             
         if where_to_plot == 'contour':
-            contour = ax.contour(xx, yy, convolved, n_contour, cmap = contour_map)
+            contour = ax.contour(xx, yy, convolved, n_contour, 
+            cmap = contour_map)
             cb = plt.colorbar(contour)
             cb.set_label('Normalized '+Param_name)
             
